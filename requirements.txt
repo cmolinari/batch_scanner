@@ -1,0 +1,8 @@
+streamlit
+pyzbar
+pytesseract
+Pillow
+requests
+gspread
+oauth2client
+beautifulsoup4
