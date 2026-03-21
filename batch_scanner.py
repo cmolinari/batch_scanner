@@ -31,13 +31,33 @@ def save_batch_to_sheet(car_list):
     if not sheet:
         return False, "❌ Error: Could not connect to Google Sheet."
     try:
+        # 1. Fetch existing codes (Column A)
+        existing_codes = sheet.col_values(1)  # Codes are in the first column
+        existing_codes_set = set(existing_codes)
+        
         rows_to_add = []
+        skipped_count = 0
+        
         for car in car_list:
+            # 2. Skip if code already exists
+            if car['code'] in existing_codes_set:
+                skipped_count += 1
+                continue
+                
             link_formula = f'=HYPERLINK("{car["link"]}", "View")'
             row = [car['code'], car.get('name', 'Unknown'), car.get('series', 'Unknown'), link_formula, "Scanned"] 
             rows_to_add.append(row)
+        
+        if not rows_to_add:
+            return True, f"ℹ️ All {len(car_list)} cars were already in the sheet. No new rows added."
+
+        # 3. Batch Append
         sheet.append_rows(rows_to_add, value_input_option='USER_ENTERED')
-        return True, f"✅ Added {len(rows_to_add)} cars to the sheet!"
+        
+        msg = f"✅ Added {len(rows_to_add)} cars to the sheet!"
+        if skipped_count > 0:
+            msg += f" (Skipped {skipped_count} duplicates)"
+        return True, msg
     except Exception as e:
         return False, f"❌ Cloud Error: {e}"
 
