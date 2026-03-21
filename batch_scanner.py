@@ -133,7 +133,10 @@ def extract_all_codes(image):
         
         matches = re.findall(pattern, normalized_text)
         for m in matches:
-            all_found.add(m)
+            # Truncate the suffix to 4 characters as the 5th is a box code not used for search
+            prefix, suffix = m.split('-')
+            clean_code = f"{prefix}-{suffix[:4]}"
+            all_found.add(clean_code)
             
     return sorted(list(all_found))
 
