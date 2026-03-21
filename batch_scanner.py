@@ -31,13 +31,33 @@ def save_batch_to_sheet(car_list):
     if not sheet:
         return False, "❌ Error: Could not connect to Google Sheet."
     try:
+        # 1. Fetch existing codes (Column A)
+        existing_codes = sheet.col_values(1)  # Codes are in the first column
+        existing_codes_set = set(existing_codes)
+        
         rows_to_add = []
+        skipped_count = 0
+        
         for car in car_list:
+            # 2. Skip if code already exists
+            if car['code'] in existing_codes_set:
+                skipped_count += 1
+                continue
+                
             link_formula = f'=HYPERLINK("{car["link"]}", "View")'
             row = [car['code'], car.get('name', 'Unknown'), car.get('series', 'Unknown'), link_formula, "Scanned"] 
             rows_to_add.append(row)
+        
+        if not rows_to_add:
+            return True, f"ℹ️ All {len(car_list)} cars were already in the sheet. No new rows added."
+
+        # 3. Batch Append
         sheet.append_rows(rows_to_add, value_input_option='USER_ENTERED')
-        return True, f"✅ Added {len(rows_to_add)} cars to the sheet!"
+        
+        msg = f"✅ Added {len(rows_to_add)} cars to the sheet!"
+        if skipped_count > 0:
+            msg += f" (Skipped {skipped_count} duplicates)"
+        return True, msg
     except Exception as e:
         return False, f"❌ Cloud Error: {e}"
 
@@ -73,25 +93,49 @@ def generate_collecthw_url(code):
     except:
         return None
 
+def normalize_code(text):
+    """Common OCR corrections for HW codes"""
+    return text.replace('O', '0').replace('S', '5').replace('I', '1').replace('Q', '0')
+
 def extract_all_codes(image):
-    """Reverted to simpler OCR logic with O->0 correction"""
-    # 1. Basic Preprocessing
+    """Multi-pass OCR strategy for maximum detection rate"""
+    image = ImageOps.exif_transpose(image)
     gray = ImageOps.grayscale(image)
-    enhancer = ImageEnhance.Contrast(gray)
-    clean_img = enhancer.enhance(2.0)
+    width, height = gray.size
     
-    # 2. OCR Reading
-    custom_config = r'--psm 6' 
-    text = pytesseract.image_to_string(clean_img, config=custom_config)
+    # Focus areas: Full image and Top half (where lighting/perspective often varies)
+    top_half = gray.crop((0, 0, width, height // 2))
     
-    # 3. Normalization (Handle common misread: Letter 'O' -> Number '0')
-    normalized_text = text.replace('O', '0')
+    all_found = set()
     
-    # 4. Regex Hunt
-    pattern = r'[A-Z0-9]{5}-[A-Z0-9]{4}'
-    matches = re.findall(pattern, normalized_text)
+    # Configs: (source_img, resize, contrast, psm, sharp, bright)
+    configs = [
+        (gray, 2, 2.0, 11, 1.0, 1.0),   # Standard Full
+        (gray, 2, 1.2, 12, 1.0, 1.0),   # Low Contrast/Sparse
+        (top_half, 3, 2.0, 11, 1.5, 1.0) # High-Res Top Focus
+    ]
     
-    return sorted(list(set(matches)))
+    pattern = r'[A-Z0-9]{5}-[A-Z0-9]{4,5}'
+    
+    for src, resize, contrast, psm, sharp, bright in configs:
+        w, h = src.size
+        img = src.resize((int(w * resize), int(h * resize)), Image.Resampling.LANCZOS)
+        
+        if contrast != 1.0:
+            img = ImageEnhance.Contrast(img).enhance(contrast)
+        if sharp != 1.0:
+            img = ImageEnhance.Sharpness(img).enhance(sharp)
+        if bright != 1.0:
+            img = ImageEnhance.Brightness(img).enhance(bright)
+            
+        text = pytesseract.image_to_string(img, config=f'--psm {psm}')
+        normalized_text = normalize_code(text)
+        
+        matches = re.findall(pattern, normalized_text)
+        for m in matches:
+            all_found.add(m)
+            
+    return sorted(list(all_found))
 
 # --- APP INTERFACE ---
 st.set_page_config(page_title="HW Stack Scanner", layout="wide")
